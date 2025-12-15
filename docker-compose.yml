@@ -1,0 +1,25 @@
+services:
+  chatdev:
+    build: .
+    env_file: .env
+    volumes:
+      - ./WareHouse:/app/WareHouse
+    depends_on:
+      - qdrant
+    networks:
+      - chatdev-net
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - chatdev-net
+
+networks:
+  chatdev-net:
+
+volumes:
+  qdrant_data:

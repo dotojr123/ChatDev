@@ -71,68 +71,19 @@ class ComposedPhase(ABC):
 
     @abstractmethod
     def update_phase_env(self, chat_env):
-        """
-        update self.phase_env (if needed) using chat_env, then the chatting will use self.phase_env to follow the context and fill placeholders in phase prompt
-        must be implemented in customized phase
-        the usual format is just like:
-        ```
-            self.phase_env.update({key:chat_env[key]})
-        ```
-        Args:
-            chat_env: global chat chain environment
-
-        Returns: None
-
-        """
         pass
 
     @abstractmethod
     def update_chat_env(self, chat_env) -> ChatEnv:
-        """
-        update chan_env based on the results of self.execute, which is self.seminar_conclusion
-        must be implemented in customized phase
-        the usual format is just like:
-        ```
-            chat_env.xxx = some_func_for_postprocess(self.seminar_conclusion)
-        ```
-        Args:
-            chat_env:global chat chain environment
-
-        Returns:
-            chat_env: updated global chat chain environment
-
-        """
         pass
 
     @abstractmethod
     def break_cycle(self, phase_env) -> bool:
-        """
-        special conditions for early break the loop in ComposedPhase
-        Args:
-            phase_env: phase environment
-
-        Returns: None
-
-        """
         pass
 
-    def execute(self, chat_env) -> ChatEnv:
+    async def execute(self, chat_env) -> ChatEnv:
         """
-        similar to Phase.execute, but add control for breaking the loop
-        1. receive information from environment(ComposedPhase): update the phase environment from global environment
-        2. for each SimplePhase in ComposedPhase
-            a) receive information from environment(SimplePhase)
-            b) check loop break
-            c) execute the chatting
-            d) change the environment(SimplePhase)
-            e) check loop break
-        3. change the environment(ComposedPhase): update the global environment using the conclusion
-
-        Args:
-            chat_env: global chat chain environment
-
-        Returns:
-
+        Async execute
         """
         self.update_phase_env(chat_env)
         for cycle_index in range(1, self.cycle_num + 1):
@@ -149,7 +100,7 @@ class ComposedPhase(ABC):
                     self.phases[phase].update_phase_env(chat_env)
                     if self.break_cycle(self.phases[phase].phase_env):
                         return chat_env
-                    chat_env = self.phases[phase].execute(chat_env,
+                    chat_env = await self.phases[phase].execute(chat_env,
                                                           self.chat_turn_limit_default if max_turn_step <= 0 else max_turn_step,
                                                           need_reflect)
                     if self.break_cycle(self.phases[phase].phase_env):
