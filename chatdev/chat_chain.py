@@ -13,6 +13,7 @@ from chatdev.chat_env import ChatEnv, ChatEnvConfig
 from chatdev.statistics import get_info
 from camel.web_spider import modal_trans
 from chatdev.utils import log_visualize, now
+from chatdev.memory import QdrantVectorStore
 
 
 def check_bool(s):
@@ -118,7 +119,7 @@ class ChatChain:
         for employee in self.recruitments:
             self.chat_env.recruit(agent_name=employee)
 
-    def execute_step(self, phase_item: dict):
+    async def execute_step(self, phase_item: dict):
         """
         execute single phase in the chain
         Args:
@@ -135,7 +136,7 @@ class ChatChain:
             max_turn_step = phase_item['max_turn_step']
             need_reflect = check_bool(phase_item['need_reflect'])
             if phase in self.phases:
-                self.chat_env = self.phases[phase].execute(self.chat_env,
+                self.chat_env = await self.phases[phase].execute(self.chat_env,
                                                            self.chat_turn_limit_default if max_turn_step <= 0 else max_turn_step,
                                                            need_reflect)
             else:
@@ -154,18 +155,18 @@ class ChatChain:
                                                          config_role=self.config_role,
                                                          model_type=self.model_type,
                                                          log_filepath=self.log_filepath)
-            self.chat_env = compose_phase_instance.execute(self.chat_env)
+            self.chat_env = await compose_phase_instance.execute(self.chat_env)
         else:
             raise RuntimeError(f"PhaseType '{phase_type}' is not yet implemented.")
 
-    def execute_chain(self):
+    async def execute_chain(self):
         """
         execute the whole chain based on ChatChainConfig.json
         Returns: None
 
         """
         for phase_item in self.chain:
-            self.execute_step(phase_item)
+            await self.execute_step(phase_item)
 
     def get_logfilepath(self):
         """
@@ -185,7 +186,7 @@ class ChatChain:
                                     "{}.log".format("_".join([self.project_name, self.org_name, start_time])))
         return start_time, log_filepath
 
-    def pre_processing(self):
+    async def pre_processing(self):
         """
         remove useless files and log some global config settings
         Returns: None
@@ -207,7 +208,10 @@ class ChatChain:
         self.chat_env.set_directory(software_path)
 
         if self.chat_env.config.with_memory is True:
-            self.chat_env.init_memory()
+            # self.chat_env.init_memory()
+            # New Memory System with Qdrant
+            self.chat_env.memory = QdrantVectorStore()
+            await self.chat_env.memory.initialize()
 
         # copy config files to software path
         shutil.copy(self.config_path, software_path)
@@ -247,7 +251,7 @@ class ChatChain:
 
         # init task prompt
         if check_bool(self.config['self_improve']):
-            self.chat_env.env_dict['task_prompt'] = self.self_task_improve(self.task_prompt_raw)
+            self.chat_env.env_dict['task_prompt'] = await self.self_task_improve(self.task_prompt_raw)
         else:
             self.chat_env.env_dict['task_prompt'] = self.task_prompt_raw
         if(check_bool(self.web_spider)):
@@ -323,7 +327,7 @@ class ChatChain:
                                  os.path.basename(self.log_filepath)))
 
     # @staticmethod
-    def self_task_improve(self, task_prompt):
+    async def self_task_improve(self, task_prompt):
         """
         ask agent to improve the user query prompt
         Args:
@@ -355,8 +359,8 @@ then you should return a message in a format like \"<INFO> revised_version_of_th
         # log_visualize("System", role_play_session.assistant_sys_msg)
         # log_visualize("System", role_play_session.user_sys_msg)
 
-        _, input_user_msg = role_play_session.init_chat(None, None, self_task_improve_prompt)
-        assistant_response, user_response = role_play_session.step(input_user_msg, True)
+        _, input_user_msg = await role_play_session.init_chat(None, None, self_task_improve_prompt)
+        assistant_response, user_response = await role_play_session.step(input_user_msg, True)
         revised_task_prompt = assistant_response.msg.content.split("<INFO>")[-1].lower().strip()
         log_visualize(role_play_session.assistant_agent.role_name, assistant_response.msg.content)
         log_visualize(

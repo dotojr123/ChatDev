@@ -28,44 +28,6 @@ from chatdev.utils import log_arguments, log_visualize
 
 @log_arguments
 class RolePlaying:
-    r"""Role playing between two agents.
-
-    Args:
-        assistant_role_name (str): The name of the role played by the
-            assistant.
-        user_role_name (str): The name of the role played by the user.
-        critic_role_name (str): The name of the role played by the critic.
-            (default: :obj:`"critic"`)
-        task_prompt (str, optional): A prompt for the task to be performed.
-            (default: :obj:`""`)
-        with_task_specify (bool, optional): Whether to use a task specify
-            agent. (default: :obj:`True`)
-        with_task_planner (bool, optional): Whether to use a task planner
-            agent. (default: :obj:`False`)
-        with_critic_in_the_loop (bool, optional): Whether to include a critic
-            in the loop. (default: :obj:`False`)
-        model_type (ModelType, optional): The type of backend model to use.
-            (default: :obj:`ModelType.GPT_3_5_TURBO`)
-        task_type (TaskType, optional): The type of task to perform.
-            (default: :obj:`TaskType.AI_SOCIETY`)
-        assistant_agent_kwargs (Dict, optional): Additional arguments to pass
-            to the assistant agent. (default: :obj:`None`)
-        user_agent_kwargs (Dict, optional): Additional arguments to pass to
-            the user agent. (default: :obj:`None`)
-        task_specify_agent_kwargs (Dict, optional): Additional arguments to
-            pass to the task specify agent. (default: :obj:`None`)
-        task_planner_agent_kwargs (Dict, optional): Additional arguments to
-            pass to the task planner agent. (default: :obj:`None`)
-        critic_kwargs (Dict, optional): Additional arguments to pass to the
-            critic. (default: :obj:`None`)
-        sys_msg_generator_kwargs (Dict, optional): Additional arguments to
-            pass to the system message generator. (default: :obj:`None`)
-        extend_sys_msg_meta_dicts (List[Dict], optional): A list of dicts to
-            extend the system message meta dicts with. (default: :obj:`None`)
-        extend_task_specify_meta_dict (Dict, optional): A dict to extend the
-            task specify meta dict with. (default: :obj:`None`)
-    """
-
     def __init__(
             self,
             assistant_role_name: str,
@@ -100,7 +62,8 @@ class RolePlaying:
         self.task_type = task_type
         self.memory = memory
 
-
+        # Task Specify and Planner are still synchronous in initialization for now
+        # Ideally they should also be async if they use LLMs
         if with_task_specify:
             task_specify_meta_dict = dict()
             if self.task_type in [TaskType.AI_SOCIETY, TaskType.MISALIGNMENT]:
@@ -115,6 +78,7 @@ class RolePlaying:
                 task_type=self.task_type,
                 **(task_specify_agent_kwargs or {}),
             )
+            # Warning: This is still synchronous
             self.specified_task_prompt = task_specify_agent.step(
                 task_prompt,
                 meta_dict=task_specify_meta_dict,
@@ -155,55 +119,33 @@ class RolePlaying:
                                                     **(assistant_agent_kwargs or {}), )
         self.user_agent: ChatAgent = ChatAgent(self.user_sys_msg,memory, model_type, **(user_agent_kwargs or {}), )
 
-        if with_critic_in_the_loop:
-            raise ValueError("with_critic_in_the_loop not available")
-            # if critic_role_name.lower() == "human":
-            #     self.critic = Human(**(critic_kwargs or {}))
-            # else:
-            #     critic_criteria = (critic_criteria or "improving the task performance")
-            #     critic_msg_meta_dict = dict(critic_role=critic_role_name, criteria=critic_criteria,
-            #                                 **sys_msg_meta_dicts[0])
-            #     self.critic_sys_msg = sys_msg_generator.from_dict(critic_msg_meta_dict,
-            #                                                       role_tuple=(critic_role_name, RoleType.CRITIC), )
-            #     self.critic = CriticAgent(self.critic_sys_msg, model_type, **(critic_kwargs or {}), )
-        else:
-            self.critic = None
+        self.critic = None
 
-    def init_chat(self, phase_type: PhaseType = None,
+    async def init_chat(self, phase_type: PhaseType = None,
                   placeholders=None, phase_prompt=None):
-        r"""Initializes the chat by resetting both the assistant and user
-        agents, and sending the system messages again to the agents using
-        chat messages. Returns the assistant's introductory message and the
-        user's response messages.
-
-        Returns:
-            A tuple containing an `AssistantChatMessage` representing the
-            assistant's introductory message, and a list of `ChatMessage`s
-            representing the user's response messages.
-        """
         if placeholders is None:
             placeholders = {}
         self.assistant_agent.reset()
         self.user_agent.reset()
 
-        # refactored ChatDev
         content = phase_prompt.format(
             **({"assistant_role": self.assistant_agent.role_name} | placeholders)
         )
-        retrieval_memory = self.assistant_agent.use_memory(content)
+
+        # Async memory retrieval - now enabled
+        retrieval_memory = await self.assistant_agent.use_memory_async(content)
         if retrieval_memory!= None:
             placeholders["examples"] = retrieval_memory
+
         user_msg = UserChatMessage(
             role_name=self.user_sys_msg.role_name,
             role="user",
             content=content
-            # content here will be concatenated with assistant role prompt (because we mock user and send msg to assistant) in the ChatAgent.step
         )
         pseudo_msg = copy.deepcopy(user_msg)
         pseudo_msg.role = "assistant"
         self.user_agent.update_messages(pseudo_msg)
 
-        # here we concatenate to store the real message in the log
         log_visualize(self.user_agent.role_name,
                       "**[Start Chat]**\n\n[" + self.assistant_agent.system_message.content + "]\n\n" + content)
         return None, user_msg
@@ -212,43 +154,30 @@ class RolePlaying:
             self,
             messages: Sequence[ChatMessage],
     ) -> ChatMessage:
-        r"""Processes a list of chat messages, returning the processed message.
-        If multiple messages are provided and `with_critic_in_the_loop`
-        is `False`, raises a `ValueError`. If no messages are provided, also
-        raises a `ValueError`.
-
-        Args:
-            messages:
-
-        Returns:
-            A single `ChatMessage` representing the processed message.
-        """
         if len(messages) == 0:
             raise ValueError("No messages to process.")
-        if len(messages) > 1 and not self.with_critic_in_the_loop:
-            raise ValueError("Got than one message to process. "
-                             f"Num of messages: {len(messages)}.")
-        elif self.with_critic_in_the_loop and self.critic is not None:
-            processed_msg = self.critic.step(messages)
-        else:
-            processed_msg = messages[0]
+        if len(messages) > 1:
+             raise ValueError("Got more than one message to process.")
 
-        return processed_msg
+        return messages[0]
 
-    def step(
+    async def step(
             self,
             user_msg: ChatMessage,
             assistant_only: bool,
     ) -> Tuple[ChatAgentResponse, ChatAgentResponse]:
-        assert isinstance(user_msg, ChatMessage), print("broken user_msg: " + str(user_msg))
+        assert isinstance(user_msg, ChatMessage)
 
-        # print("assistant...")
         user_msg_rst = user_msg.set_user_role_at_backend()
-        assistant_response = self.assistant_agent.step(user_msg_rst)
+
+        # Async Step
+        assistant_response = await self.assistant_agent.step(user_msg_rst)
+
         if assistant_response.terminated or assistant_response.msgs is None:
             return (
                 ChatAgentResponse([assistant_response.msgs], assistant_response.terminated, assistant_response.info),
                 ChatAgentResponse([], False, {}))
+
         assistant_msg = self.process_messages(assistant_response.msgs)
         if self.assistant_agent.info:
             return (ChatAgentResponse([assistant_msg], assistant_response.terminated, assistant_response.info),
@@ -261,9 +190,11 @@ class RolePlaying:
                 ChatAgentResponse([], False, {})
             )
 
-        # print("user...")
         assistant_msg_rst = assistant_msg.set_user_role_at_backend()
-        user_response = self.user_agent.step(assistant_msg_rst)
+
+        # Async Step
+        user_response = await self.user_agent.step(assistant_msg_rst)
+
         if user_response.terminated or user_response.msgs is None:
             return (ChatAgentResponse([assistant_msg], assistant_response.terminated, assistant_response.info),
                     ChatAgentResponse([user_response], user_response.terminated, user_response.info))

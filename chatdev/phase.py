@@ -45,7 +45,7 @@ class Phase(ABC):
         self.log_filepath = log_filepath
 
     @log_arguments
-    def chatting(
+    async def chatting(
             self,
             chat_env,
             task_prompt: str,
@@ -64,25 +64,7 @@ class Phase(ABC):
             chat_turn_limit=10
     ) -> str:
         """
-
-        Args:
-            chat_env: global chatchain environment
-            task_prompt: user query prompt for building the software
-            assistant_role_name: who receives the chat
-            user_role_name: who starts the chat
-            phase_prompt: prompt of the phase
-            phase_name: name of the phase
-            assistant_role_prompt: prompt of assistant role
-            user_role_prompt: prompt of user role
-            task_type: task type
-            need_reflect: flag for checking reflection
-            with_task_specify: with task specify
-            model_type: model type
-            placeholders: placeholders for phase environment to generate phase prompt
-            chat_turn_limit: turn limits in each chat
-
-        Returns:
-
+        Async chatting
         """
 
         if placeholders is None:
@@ -94,7 +76,6 @@ class Phase(ABC):
         if not chat_env.exist_employee(user_role_name):
             raise ValueError(f"{user_role_name} not recruited in ChatEnv.")
 
-        # init role play
         role_play_session = RolePlaying(
             assistant_role_name=assistant_role_name,
             user_role_name=user_role_name,
@@ -108,36 +89,16 @@ class Phase(ABC):
             background_prompt=chat_env.config.background_prompt
         )
 
-        # log_visualize("System", role_play_session.assistant_sys_msg)
-        # log_visualize("System", role_play_session.user_sys_msg)
-
-        # start the chat
-        _, input_user_msg = role_play_session.init_chat(None, placeholders, phase_prompt)
+        _, input_user_msg = await role_play_session.init_chat(None, placeholders, phase_prompt)
         seminar_conclusion = None
 
-        # handle chats
-        # the purpose of the chatting in one phase is to get a seminar conclusion
-        # there are two types of conclusion
-        # 1. with "<INFO>" mark
-        # 1.1 get seminar conclusion flag (ChatAgent.info) from assistant or user role, which means there exist special "<INFO>" mark in the conversation
-        # 1.2 add "<INFO>" to the reflected content of the chat (which may be terminated chat without "<INFO>" mark)
-        # 2. without "<INFO>" mark, which means the chat is terminated or normally ended without generating a marked conclusion, and there is no need to reflect
         for i in range(chat_turn_limit):
-            # start the chat, we represent the user and send msg to assistant
-            # 1. so the input_user_msg should be assistant_role_prompt + phase_prompt
-            # 2. then input_user_msg send to LLM and get assistant_response
-            # 3. now we represent the assistant and send msg to user, so the input_assistant_msg is user_role_prompt + assistant_response
-            # 4. then input_assistant_msg send to LLM and get user_response
-            # all above are done in role_play_session.step, which contains two interactions with LLM
-            # the first interaction is logged in role_play_session.init_chat
-            assistant_response, user_response = role_play_session.step(input_user_msg, chat_turn_limit == 1)
+            assistant_response, user_response = await role_play_session.step(input_user_msg, chat_turn_limit == 1)
 
             conversation_meta = "**" + assistant_role_name + "<->" + user_role_name + " on : " + str(
                 phase_name) + ", turn " + str(i) + "**\n\n"
 
-            # TODO: max_tokens_exceeded errors here
             if isinstance(assistant_response.msg, ChatMessage):
-                # we log the second interaction here
                 log_visualize(role_play_session.assistant_agent.role_name,
                               conversation_meta + "[" + role_play_session.user_agent.system_message.content + "]\n\n" + assistant_response.msg.content)
                 if role_play_session.assistant_agent.info:
@@ -147,7 +108,6 @@ class Phase(ABC):
                     break
 
             if isinstance(user_response.msg, ChatMessage):
-                # here is the result of the second interaction, which may be used to start the next chat turn
                 log_visualize(role_play_session.user_agent.role_name,
                               conversation_meta + "[" + role_play_session.assistant_agent.system_message.content + "]\n\n" + user_response.msg.content)
                 if role_play_session.user_agent.info:
@@ -156,24 +116,22 @@ class Phase(ABC):
                 if user_response.terminated:
                     break
 
-            # continue the chat
             if chat_turn_limit > 1 and isinstance(user_response.msg, ChatMessage):
                 input_user_msg = user_response.msg
             else:
                 break
 
-        # conduct self reflection
         if need_reflect:
             if seminar_conclusion in [None, ""]:
-                seminar_conclusion = "<INFO> " + self.self_reflection(task_prompt, role_play_session, phase_name,
+                seminar_conclusion = "<INFO> " + await self.self_reflection(task_prompt, role_play_session, phase_name,
                                                                       chat_env)
             if "recruiting" in phase_name:
                 if "Yes".lower() not in seminar_conclusion.lower() and "No".lower() not in seminar_conclusion.lower():
-                    seminar_conclusion = "<INFO> " + self.self_reflection(task_prompt, role_play_session,
+                    seminar_conclusion = "<INFO> " + await self.self_reflection(task_prompt, role_play_session,
                                                                           phase_name,
                                                                           chat_env)
             elif seminar_conclusion in [None, ""]:
-                seminar_conclusion = "<INFO> " + self.self_reflection(task_prompt, role_play_session, phase_name,
+                seminar_conclusion = "<INFO> " + await self.self_reflection(task_prompt, role_play_session, phase_name,
                                                                       chat_env)
         else:
             seminar_conclusion = assistant_response.msg.content
@@ -182,23 +140,11 @@ class Phase(ABC):
         seminar_conclusion = seminar_conclusion.split("<INFO>")[-1]
         return seminar_conclusion
 
-    def self_reflection(self,
+    async def self_reflection(self,
                         task_prompt: str,
                         role_play_session: RolePlaying,
                         phase_name: str,
                         chat_env: ChatEnv) -> str:
-        """
-
-        Args:
-            task_prompt: user query prompt for building the software
-            role_play_session: role play session from the chat phase which needs reflection
-            phase_name: name of the chat phase which needs reflection
-            chat_env: global chatchain environment
-
-        Returns:
-            reflected_content: str, reflected results
-
-        """
         messages = role_play_session.assistant_agent.stored_messages if len(
             role_play_session.assistant_agent.stored_messages) >= len(
             role_play_session.user_agent.stored_messages) else role_play_session.user_agent.stored_messages
@@ -216,10 +162,8 @@ class Phase(ABC):
         else:
             raise ValueError(f"Reflection of phase {phase_name}: Not Assigned.")
 
-        # Reflections actually is a special phase between CEO and counselor
-        # They read the whole chatting history of this phase and give refined conclusion of this phase
         reflected_content = \
-            self.chatting(chat_env=chat_env,
+            await self.chatting(chat_env=chat_env,
                           task_prompt=task_prompt,
                           assistant_role_name="Chief Executive Officer",
                           user_role_name="Counselor",
@@ -242,57 +186,16 @@ class Phase(ABC):
 
     @abstractmethod
     def update_phase_env(self, chat_env):
-        """
-        update self.phase_env (if needed) using chat_env, then the chatting will use self.phase_env to follow the context and fill placeholders in phase prompt
-        must be implemented in customized phase
-        the usual format is just like:
-        ```
-            self.phase_env.update({key:chat_env[key]})
-        ```
-        Args:
-            chat_env: global chat chain environment
-
-        Returns: None
-
-        """
         pass
 
     @abstractmethod
     def update_chat_env(self, chat_env) -> ChatEnv:
-        """
-        update chan_env based on the results of self.execute, which is self.seminar_conclusion
-        must be implemented in customized phase
-        the usual format is just like:
-        ```
-            chat_env.xxx = some_func_for_postprocess(self.seminar_conclusion)
-        ```
-        Args:
-            chat_env:global chat chain environment
-
-        Returns:
-            chat_env: updated global chat chain environment
-
-        """
         pass
 
-    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
-        """
-        execute the chatting in this phase
-        1. receive information from environment: update the phase environment from global environment
-        2. execute the chatting
-        3. change the environment: update the global environment using the conclusion
-        Args:
-            chat_env: global chat chain environment
-            chat_turn_limit: turn limit in each chat
-            need_reflect: flag for reflection
-
-        Returns:
-            chat_env: updated global chat chain environment using the conclusion from this phase execution
-
-        """
+    async def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
         self.update_phase_env(chat_env)
         self.seminar_conclusion = \
-            self.chatting(chat_env=chat_env,
+            await self.chatting(chat_env=chat_env,
                           task_prompt=chat_env.env_dict['task_prompt'],
                           need_reflect=need_reflect,
                           assistant_role_name=self.assistant_role_name,
@@ -494,8 +397,15 @@ class CodeReviewHuman(Phase):
                 "**[Software Info]**:\n\n {}".format(get_info(chat_env.env_dict['directory'], self.log_filepath)))
         return chat_env
 
-    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
+    async def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
         self.update_phase_env(chat_env)
+
+        # Check if we are in interactive mode (stdin is a TTY)
+        import sys
+        if not sys.stdin.isatty():
+             log_visualize("**[Human-Agent-Interaction]** Skipping due to non-interactive environment (API/Service mode).")
+             return chat_env
+
         log_visualize(
             f"**[Human-Agent-Interaction]**\n\n"
             f"Now you can participate in the development of the software!\n"
@@ -505,8 +415,12 @@ class CodeReviewHuman(Phase):
             f"Type 'end' on a separate line to submit.\n"
             f"You can type \"Exit\" to quit this mode at any time.\n"
         )
+        # TODO: This input blocking is problematic in async context if not handled carefully
+        # For CLI, blocking input is acceptable but blocks the event loop
+        # We use asyncio.to_thread to avoid blocking the whole loop if possible, though standard input() is tricky
         provided_comments = []
         while True:
+            # Simple blocking input for now as TTY interaction is inherently synchronous for the user
             user_input = input(">>>>>>")
             if user_input.strip().lower() == "end":
                 break
@@ -522,7 +436,7 @@ class CodeReviewHuman(Phase):
             return chat_env
 
         self.seminar_conclusion = \
-            self.chatting(chat_env=chat_env,
+            await self.chatting(chat_env=chat_env,
                           task_prompt=chat_env.env_dict['task_prompt'],
                           need_reflect=need_reflect,
                           assistant_role_name=self.assistant_role_name,
@@ -561,7 +475,7 @@ class TestErrorSummary(Phase):
 
         return chat_env
 
-    def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
+    async def execute(self, chat_env, chat_turn_limit, need_reflect) -> ChatEnv:
         self.update_phase_env(chat_env)
         if "ModuleNotFoundError" in self.phase_env['test_reports']:
             chat_env.fix_module_not_found_error(self.phase_env['test_reports'])
@@ -575,7 +489,7 @@ class TestErrorSummary(Phase):
             self.seminar_conclusion = "nothing need to do"
         else:
             self.seminar_conclusion = \
-                self.chatting(chat_env=chat_env,
+                await self.chatting(chat_env=chat_env,
                               task_prompt=chat_env.env_dict['task_prompt'],
                               need_reflect=need_reflect,
                               assistant_role_name=self.assistant_role_name,

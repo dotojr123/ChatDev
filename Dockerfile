@@ -1,24 +1,42 @@
-# Start with a Python 3.9 base image
-FROM python:3.9-slim
+# Stage 1: Builder
+FROM python:3.12-slim-bookworm as builder
 
-# Set the working directory in the container
 WORKDIR /app
 
-# Copy the current directory contents into the container at /app
-COPY . /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install necessary libraries for GUI support
-RUN apt-get update && apt-get install -y python3-tk x11-apps
+COPY requirements.txt .
+RUN pip wheel --no-cache-dir --no-deps --wheel-dir /app/wheels -r requirements.txt
 
-# Install the project dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Stage 2: Runtime
+FROM python:3.12-slim-bookworm
 
-# Set the environment variable for OpenAI API key
-# (you'll need to provide the actual key when running the container)
-ENV OPENAI_API_KEY=your_OpenAI_API_key
+WORKDIR /app
 
-# Expose the port for visualizer/app.py
-EXPOSE 8000
+# Install runtime dependencies (including tk for legacy GUI support if strictly needed, though headless is preferred)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-tk \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set an entry point that runs a shell for interactive mode
-ENTRYPOINT ["/bin/bash"]
+# Copy wheels from builder
+COPY --from=builder /app/wheels /wheels
+COPY --from=builder /app/requirements.txt .
+
+RUN pip install --no-cache /wheels/*
+
+# Copy application code
+COPY . .
+
+# Create non-root user
+RUN useradd -m chatdev && chown -R chatdev:chatdev /app
+USER chatdev
+
+# Environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+# Default command (can be overridden)
+ENTRYPOINT ["python", "run.py"]
