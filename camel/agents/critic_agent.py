@@ -54,8 +54,9 @@ class CriticAgent(ChatAgent):
         verbose: bool = False,
         logger_color: Any = Fore.MAGENTA,
     ) -> None:
-        super().__init__(system_message, model, model_config,
-                         message_window_size)
+        super().__init__(system_message=system_message, model=model,
+                         model_config=model_config,
+                         message_window_size=message_window_size)
         self.options_dict: Dict[str, str] = dict()
         self.retry_attempts = retry_attempts
         self.verbose = verbose
@@ -80,7 +81,9 @@ class CriticAgent(ChatAgent):
             self.options_dict[str(index + 1)] = option
         format = (
             f"Please first enter your choice ([1-{len(self.options_dict)}]) "
-            "and then your explanation and comparison: ")
+            "and then your explanation and comparison. "
+            "If you want to modify an option, please input the modified "
+            "option directly using the format 'Edit: <new_option>': ")
         return flatten_options + format
 
     def get_option(self, input_message: ChatMessage) -> str:
@@ -93,7 +96,6 @@ class CriticAgent(ChatAgent):
         Returns:
             str: The option selected by the critic.
         """
-        # TODO: Add support for editing options by the critic.
         msg_content = input_message.content
         i = 0
         while i < self.retry_attempts:
@@ -113,6 +115,8 @@ class CriticAgent(ChatAgent):
 
             if choice in self.options_dict:
                 return self.options_dict[choice]
+            elif choice is not None and not choice.isdigit():
+                return choice
             else:
                 input_message = ChatMessage(
                     role_name=input_message.role_name,
@@ -139,8 +143,11 @@ class CriticAgent(ChatAgent):
             Optional[str]: The critic's choice as a string, or None if the
                 message could not be parsed.
         """
-        choice = str(get_first_int(critic_msg.content))
-        return choice
+        if "Edit:" in critic_msg.content:
+            return critic_msg.content.split("Edit:", 1)[1].strip()
+
+        choice = get_first_int(critic_msg.content)
+        return str(choice) if choice is not None else None
 
     def step(self, messages: Sequence[ChatMessage]) -> ChatMessage:
         r"""Performs one step of the conversation by flattening options to the
