@@ -135,6 +135,16 @@ class Phase(ABC):
             conversation_meta = "**" + assistant_role_name + "<->" + user_role_name + " on : " + str(
                 phase_name) + ", turn " + str(i) + "**\n\n"
 
+            if assistant_response.terminated:
+                log_visualize(role_play_session.assistant_agent.role_name,
+                              f"{assistant_role_name} has terminated. Reason: {assistant_response.info.get('termination_reasons', [])}")
+                break
+
+            if user_response.terminated:
+                log_visualize(role_play_session.user_agent.role_name,
+                              f"{user_role_name} has terminated. Reason: {user_response.info.get('termination_reasons', [])}")
+                break
+
             # TODO: max_tokens_exceeded errors here
             if isinstance(assistant_response.msg, ChatMessage):
                 # we log the second interaction here
@@ -143,8 +153,6 @@ class Phase(ABC):
                 if role_play_session.assistant_agent.info:
                     seminar_conclusion = assistant_response.msg.content
                     break
-                if assistant_response.terminated:
-                    break
 
             if isinstance(user_response.msg, ChatMessage):
                 # here is the result of the second interaction, which may be used to start the next chat turn
@@ -152,8 +160,6 @@ class Phase(ABC):
                               conversation_meta + "[" + role_play_session.assistant_agent.system_message.content + "]\n\n" + user_response.msg.content)
                 if role_play_session.user_agent.info:
                     seminar_conclusion = user_response.msg.content
-                    break
-                if user_response.terminated:
                     break
 
             # continue the chat
@@ -176,7 +182,10 @@ class Phase(ABC):
                 seminar_conclusion = "<INFO> " + self.self_reflection(task_prompt, role_play_session, phase_name,
                                                                       chat_env)
         else:
-            seminar_conclusion = assistant_response.msg.content
+            if assistant_response.terminated:
+                seminar_conclusion = ""
+            else:
+                seminar_conclusion = assistant_response.msg.content
 
         log_visualize("**[Seminar Conclusion]**:\n\n {}".format(seminar_conclusion))
         seminar_conclusion = seminar_conclusion.split("<INFO>")[-1]
