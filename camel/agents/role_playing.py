@@ -128,7 +128,11 @@ class RolePlaying:
                 self.model_type,
                 **(task_planner_agent_kwargs or {}),
             )
-            self.planned_task_prompt = task_planner_agent.step(task_prompt)
+            self.planned_task_prompt = task_planner_agent.step(
+                task_prompt,
+                assistant_role_name=assistant_role_name,
+                user_role_name=user_role_name,
+            )
             task_prompt = f"{task_prompt}\n{self.planned_task_prompt}"
         else:
             self.planned_task_prompt = None
