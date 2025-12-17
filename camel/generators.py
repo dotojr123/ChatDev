@@ -190,12 +190,11 @@ class AISocietyTaskPromptGenerator:
 
         self.num_tasks = num_tasks
 
-    # TODO: Return role names for user and assistant with the generator.
     def from_role_files(
         self,
         assistant_role_names_path: str = "data/ai_society/assistant_roles.txt",
         user_role_names_path: str = "data/ai_society/user_roles.txt"
-    ) -> Generator[Tuple[str, Tuple[str, str]], None, None]:
+    ) -> Generator[Tuple[str, str, str], None, None]:
         roles_generator = RoleNameGenerator(
             assistant_role_names_path, user_role_names_path).from_role_files()
         for role_1, role_2 in roles_generator:
@@ -203,17 +202,17 @@ class AISocietyTaskPromptGenerator:
                 assistant_role=role_1, user_role=role_2,
                 num_tasks=self.num_tasks)
 
-            yield (generate_tasks_prompt, (role_1, role_2))
+            yield (generate_tasks_prompt, role_1, role_2)
 
     def from_role_generator(
         self, role_generator: Generator[Tuple, None, None]
-    ) -> Generator[Tuple[str, Tuple[str, str]], None, None]:
+    ) -> Generator[Tuple[str, str, str], None, None]:
         for role_1, role_2 in role_generator:
             generate_tasks_prompt = self.generate_tasks_prompt.format(
                 assistant_role=role_1, user_role=role_2,
                 num_tasks=self.num_tasks)
 
-            yield (generate_tasks_prompt, (role_1, role_2))
+            yield (generate_tasks_prompt, role_1, role_2)
 
 
 class SingleTxtGenerator:
