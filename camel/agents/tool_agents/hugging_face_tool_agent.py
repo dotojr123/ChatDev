@@ -26,30 +26,41 @@ class HuggingFaceToolAgent(BaseToolAgent):
     Args:
         name (str): The name of the agent.
         *args (Any): Additional positional arguments to pass to the underlying
-            Agent class.
+            Agent class if `agent` is not provided.
+        agent (Any, optional): An instantiated agent object from the
+            `transformers` library or compatible. If provided, `args` and
+            `kwargs` are ignored for initialization. (default: :obj:`None`)
         remote (bool, optional): Flag indicating whether to run the agent
             remotely. (default: :obj:`True`)
         **kwargs (Any): Additional keyword arguments to pass to the underlying
-            Agent class.
+            Agent class if `agent` is not provided.
     """
 
     def __init__(
         self,
         name: str,
         *args: Any,
+        agent: Optional[Any] = None,
         remote: bool = True,
         **kwargs: Any,
     ) -> None:
-        try:
-            # TODO: Support other tool agents
-            from transformers.tools import OpenAiAgent
-        except ImportError:
-            raise ValueError(
-                "Could not import transformers tool agents. "
-                "Please setup the environment with "
-                "pip install huggingface_hub==0.14.1 transformers==4.29.0 diffusers accelerate datasets torch soundfile sentencepiece opencv-python"
-            )
-        self.agent = OpenAiAgent(*args, **kwargs)
+        if agent is not None:
+            self.agent = agent
+        else:
+            try:
+                # Try to import OpenAiAgent for backward compatibility
+                from transformers.tools import OpenAiAgent
+                self.agent = OpenAiAgent(*args, **kwargs)
+            except ImportError:
+                # If transformers.tools is not available (newer versions),
+                # or OpenAiAgent is not found, raise an error asking to provide an agent.
+                raise ValueError(
+                    "Could not import `transformers.tools.OpenAiAgent`. "
+                    "The `transformers` library agents have been moved or removed in newer versions. "
+                    "Please provide an instantiated agent object via the `agent` argument, "
+                    "or ensure you have a compatible `transformers` version installed (e.g., 4.29.0)."
+                )
+
         self.name = name
         self.remote = remote
         self.description = f"""The `{self.name}` is a tool agent that can perform a variety of tasks including:
@@ -143,7 +154,11 @@ segmented_transformed_capybara_image.save("./segmented_transformed_capybara_imag
 
     def reset(self) -> None:
         r"""Resets the chat history of the agent."""
-        self.agent.prepare_for_new_chat()
+        if hasattr(self.agent, "prepare_for_new_chat"):
+            self.agent.prepare_for_new_chat()
+        else:
+             # Fallback or pass if method doesn't exist
+             pass
 
     def step(
         self,
@@ -164,7 +179,15 @@ segmented_transformed_capybara_image.save("./segmented_transformed_capybara_imag
         """
         if remote is None:
             remote = self.remote
-        return self.agent.run(*args, remote=remote, **kwargs)
+
+        # Check if the agent supports the 'remote' argument in run()
+        # Some agents might not support it if they are not the specific transformers OpenAiAgent
+        import inspect
+        sig = inspect.signature(self.agent.run)
+        if 'remote' in sig.parameters:
+             return self.agent.run(*args, remote=remote, **kwargs)
+        else:
+             return self.agent.run(*args, **kwargs)
 
     def chat(
         self,
@@ -185,4 +208,10 @@ segmented_transformed_capybara_image.save("./segmented_transformed_capybara_imag
         """
         if remote is None:
             remote = self.remote
-        return self.agent.chat(*args, remote=remote, **kwargs)
+
+        import inspect
+        sig = inspect.signature(self.agent.chat)
+        if 'remote' in sig.parameters:
+            return self.agent.chat(*args, remote=remote, **kwargs)
+        else:
+            return self.agent.chat(*args, **kwargs)
